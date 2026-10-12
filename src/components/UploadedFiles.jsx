@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { renderFirstPage } from '../lib/pdfRead.js';
 
 function formatSize(bytes) {
@@ -6,6 +6,24 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Wrapping hint after every _, - and . so a narrow screen breaks the name at
+ * "02_technical_" / "proposal.pdf" instead of inside a word.
+ */
+function FileName({ name }) {
+  const parts = name.split(/([._-])/);
+  return (
+    <>
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          {index % 2 === 1 ? <wbr /> : null}
+        </Fragment>
+      ))}
+    </>
+  );
 }
 
 /** First page preview, rendered on demand so opening the list stays fast. */
@@ -153,7 +171,7 @@ export default function UploadedFiles({
               <li key={file.id} className="file">
                 <div className="file__main">
                   <span className="file__name" title={file.name}>
-                    {file.name}
+                    <FileName name={file.name} />
                   </span>
                   <span className="file__meta">
                     {file.readState === 'ready'

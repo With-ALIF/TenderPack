@@ -8,23 +8,21 @@ import { nameMatchScore } from '../lib/matchSuggestions.js';
  * One row per required document: match dropdown, expiry date, status.
  * Everything the user can change sits in the same row so the status next to it
  * is obviously the result of that control.
+ *
+ * Matching itself is automatic (by file name, see useWorkbench); the button
+ * re-runs it and the dropdown is for anything it got wrong.
  */
 export default function RequirementsList({
   rows,
   files,
   matches,
-  filesById,
   duplicates,
   requirementsById,
   deadline,
   lang,
   onMatch,
   onExpiryChange,
-  onSuggest,
-  suggestions = [],
-  onAcceptSuggestion,
-  onIgnoreSuggestion,
-  onIgnoreAllSuggestions,
+  onAutoMatch,
   t,
 }) {
   if (rows.length === 0) {
@@ -49,74 +47,12 @@ export default function RequirementsList({
     <section className="panel" aria-labelledby="req-heading">
       <div className="panel__head">
         <h2 id="req-heading" className="panel__title">{t('step3.title')}</h2>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={onSuggest}>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={onAutoMatch}>
           <Sparkles size={18} aria-hidden="true" />
           {t('step3.autoMatch')}
         </button>
       </div>
       <p className="panel__help">{t('step3.help')}</p>
-
-      {suggestions.length > 0 ? (
-        <div
-          className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-500/40 dark:bg-indigo-500/10"
-          role="status"
-        >
-          <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
-            {t('step3.suggestionsTitle')}
-          </p>
-          <p className="text-sm text-indigo-800 dark:text-indigo-300">
-            {t('step3.suggestionsHint', { count: suggestions.length })}
-          </p>
-          <ul className="mt-2 flex flex-col gap-2">
-            {suggestions.map((suggestion) => {
-              const requirement = requirementsById[suggestion.requirementId];
-              const file = filesById[suggestion.fileId];
-              if (!requirement || !file) return null;
-              const pct = Math.round(suggestion.score * 100);
-              return (
-                <li
-                  key={`${suggestion.requirementId}-${suggestion.fileId}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-sm dark:bg-slate-800"
-                >
-                  <span>
-                    <span className="font-semibold text-slate-900 dark:text-slate-100">
-                      {requirement.displayTitle}
-                    </span>
-                    {' → '}
-                    <span className="text-slate-700 dark:text-slate-300">{file.name}</span>
-                    <span className="ml-1.5 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
-                      {pct}%
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      className="btn btn--primary btn--sm"
-                      onClick={() => onAcceptSuggestion(suggestion)}
-                    >
-                      {t('step3.accept')}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--sm"
-                      onClick={() => onIgnoreSuggestion(suggestion)}
-                    >
-                      {t('step3.ignore')}
-                    </button>
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm mt-2"
-            onClick={onIgnoreAllSuggestions}
-          >
-            {t('step3.ignoreAll')}
-          </button>
-        </div>
-      ) : null}
 
       <ul className="reqlist">
         {rows.map((row) => {

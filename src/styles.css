@@ -231,6 +231,10 @@ input[type="date"] {
   border-bottom: 1px solid var(--line);
 }
 
+.appbar__title {
+  min-width: 0;
+}
+
 .appbar__title h1 {
   font-size: 1.125rem;
   font-weight: 700;
@@ -327,6 +331,13 @@ input[type="date"] {
   background: var(--ok-soft);
   border-color: var(--ok-line);
   color: var(--ok-text);
+}
+
+/* The message owns the row: it may shrink and wrap (even mid-token) while the
+   dismiss button keeps its full tap target. */
+.notice > span {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Layout */
@@ -858,4 +869,128 @@ input[type="date"] {
 
 .seal__width .input {
   max-width: none;
+}
+
+/* First-page preview image: never wider than its popover, otherwise a single
+   render pushes the whole page sideways on a phone. */
+.thumb__img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--preview-backdrop);
+}
+
+/* Long, unbroken tokens (file names, tender ids, package names, English
+   requirement titles inside Bengali sentences) must wrap instead of widening
+   the layout and pushing text off-screen. */
+:where(
+  .appbar__title,
+  .privacy,
+  .notice,
+  .panel__title,
+  .panel__help,
+  .panel__note,
+  .dropzone__text,
+  .file__meta,
+  .badge,
+  .chip,
+  .tag,
+  .req__title,
+  .req__title-alt,
+  .reasons,
+  .summary,
+  .progress,
+  .expiry__hint,
+  .seal__hint,
+  .muted
+) {
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+ * Narrow screens: nothing gets clipped, everything wraps.
+ * ------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* Tighter gutters leave more width for the text itself. */
+  .appbar {
+    padding: 0.875rem 1rem;
+  }
+
+  .privacy {
+    margin: 0.625rem 1rem 0;
+  }
+
+  .notices {
+    padding: 0.625rem 1rem 0;
+  }
+
+  .layout {
+    padding: 1rem 0.875rem;
+  }
+
+  .panel {
+    padding: 1rem 0.875rem;
+  }
+
+  .appfoot {
+    padding: 1rem 0.875rem 1.25rem;
+  }
+
+  /* A long button label wraps inside the card instead of overflowing it. */
+  .btn {
+    white-space: normal;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  .btn--lg {
+    padding: 0.625rem 1rem;
+  }
+
+  /* Chips carry counts and file names: let them break too. */
+  .chip {
+    white-space: normal;
+    max-width: 100%;
+  }
+
+  /* Show the whole file name rather than cutting it off with an ellipsis.
+     Breaks come from the <wbr> after _, - and . (see UploadedFiles); the
+     word break is only the fallback for a segment that still cannot fit. */
+  .file__name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+
+  /* Name, badge and buttons each get a full-width line, so the badge never
+     squeezes the name into a narrow column of mid-word breaks. */
+  .file__main,
+  .file__tags {
+    flex: 1 1 100%;
+  }
+
+  /* Keep the action buttons on their own line, starting at the left edge, so
+     the preview popover always opens inside the viewport. */
+  .file__actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  /* The status badge drops onto its own line instead of squeezing the
+     requirement title into a sliver of space. */
+  .req__head {
+    flex-wrap: wrap;
+  }
+
+  .req__titles {
+    flex: 1 1 calc(100% - 3rem);
+  }
+
+  .req__head > span:last-child {
+    margin-top: 0.25rem;
+  }
 }

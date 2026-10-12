@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildChecklist, summarizeChecklist, blockingReasons } from '../lib/status.js';
 import { displayTitle, parseRequirements, sanitizeFileBase } from '../lib/requirements.js';
 import { inspectPdf, sha256Hex, looksLikePdfName, fileHasPdfMagic, READ_ERROR } from '../lib/pdfRead.js';
-import { suggestMatches } from '../lib/matchSuggestions.js';
+import { suggestByName, nameMatchScore } from '../lib/matchSuggestions.js';
 import {
   SEAL_DEFAULT_SCOPE,
   SEAL_DEFAULT_WIDTH_MM,
@@ -167,6 +167,12 @@ export default function useWorkbench(lang, t, notify) {
   // by content hash and re-applied as the same files are added again.
   const pendingByHashRef = useRef(null);
   const reapplyPendingMatchesRef = useRef(() => {});
+  // One warning per session when hashing is unavailable (insecure context).
+  const warnedNoHashRef = useRef(false);
+  // Which requirement -> file pairs automatic matching produced. Only these
+  // may be re-paired or upgraded later; anything the user picked by hand is
+  // never touched again.
+  const autoMatchedByRef = useRef(new Map());
 
   const addFiles = useCallback(
     async (incoming) => {
@@ -245,8 +251,19 @@ export default function useWorkbench(lang, t, notify) {
           try {
             const buffer = await entry.file.arrayBuffer();
             patch.data = new Uint8Array(buffer);
-            const hash = await sha256Hex(buffer);
-            patch.hash = hash;
+            // crypto.subtle exists only in a secure context (https:// or
+            // localhost). Served over plain http — a phone or a LAN address —
+            // the digest call throws, and that must not be mistaken for a
+            // damaged PDF: only duplicate detection is lost, the upload works.
+            try {
+              patch.hash = await sha256Hex(buffer);
+            } catch (hashError) {
+              patch.hash = null;
+              if (!warnedNoHashRef.current) {
+                warnedNoHashRef.current = true;
+                notify('info', 'msg.noContentHash');
+              }
+            }
             const inspection = await inspectPdf(patch.data);
             if (inspection.ok) {
               patch.readState = 'ready';
@@ -346,6 +363,8 @@ export default function useWorkbench(lang, t, notify) {
 
   const setMatch = useCallback(
     (requirementId, fileId) => {
+      // Any manual choice outranks automatic matching from now on.
+      autoMatchedByRef.current.delete(requirementId);
       if (!fileId) {
         setMatches((current) => {
           if (!current[requirementId]) return current;
@@ -379,27 +398,127 @@ export default function useWorkbench(lang, t, notify) {
     });
   }, []);
 
-  const applySuggestions = useCallback(() => {
-    const suggestions = suggestMatches({ files, requirements: orderedRequirements });
-    if (suggestions.length === 0) {
-      notify('info', 'step3.autoMatchNone');
-      return 0;
-    }
-    setMatches((current) => {
-      const next = { ...current };
-      const usedRequirements = new Set(Object.keys(next));
-      const usedFiles = new Set(Object.values(next));
-      for (const suggestion of suggestions) {
-        if (usedFiles.has(suggestion.fileId) || usedRequirements.has(suggestion.requirementId)) continue;
-        next[suggestion.requirementId] = suggestion.fileId;
-        usedFiles.add(suggestion.fileId);
-        usedRequirements.add(suggestion.requirementId);
+  /**
+   * A content duplicate may not sit in two different documents. Mirrors the
+   * second half of `canMatch`, but silent: automatic matching skips the file
+   * instead of warning about it, because nobody asked for it yet.
+   */
+  const duplicateBlockedFor = useCallback(
+    (fileId, requirementId, currentMatches) => {
+      const group = duplicates.find((ids) => ids.includes(fileId));
+      if (!group || group.length < 2) return false;
+      return group.some((id) => {
+        if (id === fileId) return false;
+        const usedFor = Object.entries(currentMatches).find(([, value]) => value === id);
+        return Boolean(usedFor) && usedFor[0] !== requirementId;
+      });
+    },
+    [duplicates],
+  );
+
+  /**
+   * Auto-match by file name:
+   *  - every requirement that is not matched yet gets the free file with the
+   *    best nameMatchScore (>= 0.5), best pairing first;
+   *  - an automatic pairing the user has not touched is upgraded when a
+   *    clearly better-named file turns up later;
+   *  - matches the user picked by hand are never changed.
+   *
+   * `announceEmpty` is for the button, which always reports the outcome; the
+   * automatic run on upload stays quiet when there is simply nothing to match.
+   */
+  const autoMatchByName = useCallback(
+    (announceEmpty) => {
+      const readyFiles = files.filter((file) => file.readState === 'ready');
+      const proposals = suggestByName({ files: readyFiles, requirements: orderedRequirements, matches });
+
+      const applied = [];
+      const takenRequirements = new Set(Object.keys(matches));
+      const takenFiles = new Set(Object.values(matches));
+      for (const proposal of proposals) {
+        if (takenRequirements.has(proposal.requirementId)) continue;
+        if (takenFiles.has(proposal.fileId)) continue;
+        if (duplicateBlockedFor(proposal.fileId, proposal.requirementId, matches)) continue;
+        applied.push(proposal);
+        takenRequirements.add(proposal.requirementId);
+        takenFiles.add(proposal.fileId);
       }
-      return next;
-    });
-    notify('info', 'step3.autoMatchApplied', { count: suggestions.length });
-    return suggestions.length;
-  }, [files, orderedRequirements, notify]);
+
+      // Upgrade automatic pairings that a better-named free file could beat.
+      for (const requirement of orderedRequirements) {
+        const currentFileId = matches[requirement.id];
+        if (!currentFileId) continue;
+        if (autoMatchedByRef.current.get(requirement.id) !== currentFileId) continue;
+        const currentFile = filesById[currentFileId];
+        if (!currentFile) continue;
+        const currentScore = nameMatchScore(currentFile.name, requirement);
+
+        let best = null;
+        for (const file of readyFiles) {
+          if (takenFiles.has(file.id)) continue;
+          const score = nameMatchScore(file.name, requirement);
+          if (score >= 0.5 && score > currentScore && (!best || score > best.score)) best = file;
+        }
+        if (!best) continue;
+        if (duplicateBlockedFor(best.id, requirement.id, matches)) continue;
+
+        applied.push({ requirementId: requirement.id, fileId: best.id });
+        takenFiles.delete(currentFileId);
+        takenFiles.add(best.id);
+      }
+
+      if (applied.length === 0) {
+        if (announceEmpty) notify('info', 'step3.autoMatchNone');
+        return 0;
+      }
+
+      setMatches((current) => {
+        const next = { ...current };
+        const usedRequirements = new Set(Object.keys(next));
+        const usedFiles = new Set(Object.values(next));
+        for (const proposal of applied) {
+          const previous = next[proposal.requirementId];
+          if (previous && autoMatchedByRef.current.get(proposal.requirementId) !== previous) continue;
+          if (previous && previous !== proposal.fileId) {
+            if (usedFiles.has(proposal.fileId)) continue;
+            usedFiles.delete(previous);
+          } else {
+            if (usedRequirements.has(proposal.requirementId)) continue;
+            if (usedFiles.has(proposal.fileId)) continue;
+          }
+          if (duplicateBlockedFor(proposal.fileId, proposal.requirementId, next)) continue;
+          next[proposal.requirementId] = proposal.fileId;
+          usedRequirements.add(proposal.requirementId);
+          usedFiles.add(proposal.fileId);
+        }
+        return next;
+      });
+      for (const proposal of applied) {
+        autoMatchedByRef.current.set(proposal.requirementId, proposal.fileId);
+      }
+      notify('info', 'step3.autoMatchApplied', { count: applied.length });
+      return applied.length;
+    },
+    [files, filesById, orderedRequirements, matches, duplicateBlockedFor, notify],
+  );
+
+  /** Button entry point: same rules, always reports what happened. */
+  const applySuggestions = useCallback(() => autoMatchByName(true), [autoMatchByName]);
+
+  // Match as soon as requirements and files are there, so the checklist is
+  // usually filled without a click. The short delay lets a whole drop settle
+  // first: pairing is then done across every file at once (best score wins)
+  // instead of racing whichever PDF happens to finish reading first, and it
+  // collapses into a single toast. `matches` is deliberately not a dependency:
+  // un-matching a row by hand must stay that way instead of being re-filled.
+  const autoMatchRef = useRef(() => 0);
+  autoMatchRef.current = autoMatchByName;
+
+  useEffect(() => {
+    if (requirements.length === 0 || files.length === 0) return undefined;
+    const timer = setTimeout(() => autoMatchRef.current(false), 400);
+    return () => clearTimeout(timer);
+  }, [requirements, files]);
 
   /* ---------------------------------------------------------------- seal */
 

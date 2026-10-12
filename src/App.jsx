@@ -11,7 +11,6 @@ import SealPanel from './components/SealPanel.jsx';
 import GenerateBar from './components/GenerateBar.jsx';
 import { buildPackage } from './lib/buildPackage.js';
 import { buildChecklistCsv, downloadBytes, downloadText } from './lib/csv.js';
-import { suggestByName } from './lib/matchSuggestions.js';
 
 const SAMPLE_REQUIREMENTS = {
   tender: {
@@ -119,7 +118,6 @@ export default function App() {
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [dragging, setDragging] = useState(false);
-  const [suggestions, setSuggestions] = useState([]);
 
   // Keep the document language in sync for screen readers and font shaping.
   useEffect(() => {
@@ -267,38 +265,6 @@ export default function App() {
   const loadSample = useCallback(async () => {
     await loadRequirementsText(JSON.stringify(SAMPLE_REQUIREMENTS), null);
   }, [loadRequirementsText]);
-
-  // Auto  // Auto-match only *proposes*; nothing is matched until the user accepts.
-  const handleSuggest = useCallback(() => {
-    const proposed = suggestByName({ files, requirements, matches });
-    setSuggestions(proposed);
-    if (proposed.length === 0) notify('info', 'step3.autoMatchNone');
-    else notify('info', 'step3.suggestionsFound', { count: proposed.length });
-  }, [files, requirements, matches, notify]);
-
-  const handleAcceptSuggestion = useCallback(
-    (suggestion) => {
-      setMatch(suggestion.requirementId, suggestion.fileId);
-      setSuggestions((current) =>
-        current.filter(
-          (item) =>
-            item.requirementId !== suggestion.requirementId && item.fileId !== suggestion.fileId,
-        ),
-      );
-    },
-    [setMatch],
-  );
-
-  const handleIgnoreSuggestion = useCallback((suggestion) => {
-    setSuggestions((current) =>
-      current.filter(
-        (item) =>
-          !(item.requirementId === suggestion.requirementId && item.fileId === suggestion.fileId),
-      ),
-    );
-  }, []);
-
-  const handleIgnoreAllSuggestions = useCallback(() => setSuggestions([]), []);
 
   return (
     <div
@@ -459,18 +425,13 @@ export default function App() {
           rows={checklist}
           files={files.filter((file) => file.readState === 'ready')}
           matches={matches}
-          filesById={filesById}
           duplicates={duplicates}
           requirementsById={requirementsById}
           deadline={workbench.deadline}
           lang={lang}
           onMatch={setMatch}
           onExpiryChange={setExpiry}
-          onSuggest={handleSuggest}
-          suggestions={suggestions}
-          onAcceptSuggestion={handleAcceptSuggestion}
-          onIgnoreSuggestion={handleIgnoreSuggestion}
-          onIgnoreAllSuggestions={handleIgnoreAllSuggestions}
+          onAutoMatch={applySuggestions}
           t={t}
         />
 
